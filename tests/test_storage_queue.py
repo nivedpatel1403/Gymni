@@ -30,3 +30,18 @@ def test_publish_with_delay_sets_header():
     queue.publish("https://app.example.com/api/worker", {}, delay_seconds=180)
 
     assert log[0].headers["upstash-delay"] == "180s"
+
+
+def test_publish_with_custom_base_url():
+    log = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        log.append(request)
+        return httpx.Response(200, json={"messageId": "msg_789"})
+
+    regional_url = "https://qstash-eu-central-1.upstash.io"
+    queue = QStashQueue("regional-tok", base_url=regional_url, http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = queue.publish("https://app.example.com/api/worker", {"foo": "bar"})
+
+    assert result["messageId"] == "msg_789"
+    assert str(log[0].url).startswith("https://qstash-eu-central-1.upstash.io/v2/publish/")

@@ -43,7 +43,7 @@ def build_redis(settings: Settings) -> UpstashRedis:
 
 
 def build_queue(settings: Settings) -> QStashQueue:
-    return QStashQueue(settings.qstash_token)
+    return QStashQueue(settings.qstash_token, base_url=settings.qstash_url)
 
 
 def build_strava_client(settings: Settings, db: Database, redis: UpstashRedis) -> StravaClient:

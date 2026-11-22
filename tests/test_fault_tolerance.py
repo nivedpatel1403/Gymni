@@ -248,3 +248,182 @@ def test_new_dumbbell_muscle_mappings():
     assert found_db_sp is True
     assert w_db_sp["shoulders"] == 1.0
     assert w_db_sp["triceps"] == 0.5
+
+
+def test_telegram_edited_message_handling():
+    telegram = FakeTelegram()
+    runner = FakeGeminiRunner({
+        OrchestratorOutput: OrchestratorOutput(
+            intent="greeting",
+            target_entity=None,
+            needs_data=["none"],
+            needs_chart=False,
+            resolved_pronouns=[],
+            route_to="conversation",
+        ),
+        ConversationReply: ConversationReply(reply_markdown="Edited reply received!"),
+    })
+    gemini = GeminiClient(runner, NullCounter())
+    deps = worker_module.WorkerDeps(
+        owner_chat_id=111,
+        training_goal_default="Hybrid",
+        strava=FakeStrava({}),
+        telegram=telegram,
+        orchestrator=worker_module.OrchestratorAgent(gemini, model="m"),
+        strength_analyst=worker_module.StrengthAnalystAgent(gemini, model="m"),
+        endurance_analyst=worker_module.EnduranceAnalystAgent(gemini, model="m"),
+        chart_agent=worker_module.ChartAgent(gemini, model="m"),
+        conversation=worker_module.ConversationAgent(gemini, model="m"),
+        session_manager=SessionManager(_exploding_redis(403), ttl_seconds=1800),
+        profile_repo=FakeProfileRepo(AthleteProfile()),
+        exercise_history=FakeExerciseHistory(),
+        event_log=FakeEventLog(),
+    )
+
+    payload = {
+        "kind": "telegram_update",
+        "update": {
+            "update_id": 2,
+            "edited_message": {
+                "message_id": 10,
+                "chat": {"id": 111},
+                "text": "Hello there",
+            },
+        },
+        "event_hash": "hash-edited",
+    }
+    resp = _post(payload, deps)
+    assert resp.status == 200
+    assert any("Edited reply received!" in text for _, text, _ in telegram.sent_markdown)
+
+
+def test_command_with_bot_username_suffix():
+    telegram = FakeTelegram()
+    deps = worker_module.WorkerDeps(
+        owner_chat_id=111,
+        training_goal_default="Hybrid",
+        strava=FakeStrava({}),
+        telegram=telegram,
+        orchestrator=None,
+        strength_analyst=None,
+        endurance_analyst=None,
+        chart_agent=None,
+        conversation=None,
+        session_manager=SessionManager(_exploding_redis(403), ttl_seconds=1800),
+        profile_repo=FakeProfileRepo(AthleteProfile()),
+        exercise_history=FakeExerciseHistory(),
+        event_log=FakeEventLog(),
+    )
+
+    payload = {
+        "kind": "telegram_update",
+        "update": {
+            "update_id": 3,
+            "message": {
+                "message_id": 11,
+                "chat": {"id": 111},
+                "text": "/start@MyGymniBot",
+            },
+        },
+        "event_hash": "hash-start",
+    }
+    resp = _post(payload, deps)
+    assert resp.status == 200
+    assert any("Gymni" in text for _, text, _ in telegram.sent_markdown)
+
+
+def test_conversation_turn_handles_daily_cap_exceeded_gracefully():
+    telegram = FakeTelegram()
+
+    class CapExceededConversation(worker_module.ConversationAgent):
+        def reply(self, **kwargs):
+            raise GeminiDailyCapExceeded("Daily limit reached")
+
+    deps = worker_module.WorkerDeps(
+        owner_chat_id=111,
+        training_goal_default="Hybrid",
+        strava=FakeStrava({}),
+        telegram=telegram,
+        orchestrator=worker_module.OrchestratorAgent(
+            GeminiClient(FakeGeminiRunner({
+                OrchestratorOutput: OrchestratorOutput(
+                    intent="general_fitness",
+                    target_entity=None,
+                    needs_data=["none"],
+                    needs_chart=False,
+                    resolved_pronouns=[],
+                    route_to="conversation",
+                )
+            }), NullCounter()),
+            model="m",
+        ),
+        strength_analyst=None,
+        endurance_analyst=None,
+        chart_agent=None,
+        conversation=CapExceededConversation(None, "m"),
+        session_manager=SessionManager(_exploding_redis(403), ttl_seconds=1800),
+        profile_repo=FakeProfileRepo(AthleteProfile()),
+        exercise_history=FakeExerciseHistory(),
+        event_log=FakeEventLog(),
+    )
+
+    payload = {
+        "kind": "telegram_update",
+        "update": {
+            "update_id": 4,
+            "message": {
+                "message_id": 12,
+                "chat": {"id": 111},
+                "text": "How is my bench progress?",
+            },
+        },
+        "event_hash": "hash-cap",
+    }
+    resp = _post(payload, deps)
+    assert resp.status == 200
+    assert any("daily AI conversation cap" in text for _, text, _ in telegram.sent_markdown)
+
+
+def test_strength_briefing_falls_back_deterministically_when_analyst_fails():
+    telegram = FakeTelegram()
+
+    class FailingStrengthAnalyst(worker_module.StrengthAnalystAgent):
+        def analyze(self, **kwargs):
+            raise RuntimeError("Gemini 503 Service Unavailable")
+
+    deps = worker_module.WorkerDeps(
+        owner_chat_id=111,
+        training_goal_default="Hybrid",
+        strava=FakeStrava({}),
+        telegram=telegram,
+        orchestrator=None,
+        strength_analyst=FailingStrengthAnalyst(None, "m"),
+        endurance_analyst=None,
+        chart_agent=None,
+        conversation=None,
+        session_manager=SessionManager(_exploding_redis(403), ttl_seconds=1800),
+        profile_repo=FakeProfileRepo(AthleteProfile()),
+        exercise_history=FakeExerciseHistory(),
+        event_log=FakeEventLog(),
+    )
+
+    workout_text = "Bench Press (Barbell)\nSet 1: 80 kg x 8\nSet 2: 85 kg x 6"
+    payload = {
+        "kind": "telegram_update",
+        "update": {
+            "update_id": 5,
+            "message": {
+                "message_id": 13,
+                "chat": {"id": 111},
+                "text": workout_text,
+            },
+        },
+        "event_hash": "hash-fallback-briefing",
+    }
+    resp = _post(payload, deps)
+    assert resp.status == 200
+    # Workout is recorded even if LLM failed
+    assert len(deps.exercise_history.recorded) == 1
+    # User gets headline, breakdown, chart, and deterministic fallback analysis
+    assert any("Total volume:" in text for _, text, _ in telegram.sent_markdown)
+    assert len(telegram.sent_photos) == 1

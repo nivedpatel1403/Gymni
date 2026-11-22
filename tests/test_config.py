@@ -35,6 +35,10 @@ def test_settings_load_with_all_required_vars():
     settings = Settings(_env_file=None, **_valid_kwargs())
     assert settings.strava_api_base == "https://www.strava.com/api/v3"
     assert settings.weight_unit == "kg"
+    assert settings.qstash_url == "https://qstash.upstash.io"
+
+    custom = Settings(_env_file=None, **_valid_kwargs(qstash_url="https://qstash-eu-central-1.upstash.io"))
+    assert custom.qstash_url == "https://qstash-eu-central-1.upstash.io"
 
 
 def test_settings_fail_fast_on_missing_required_var():

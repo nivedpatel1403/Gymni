@@ -5,7 +5,7 @@ Strength Analyst ever sees was computed by a function in this file.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Protocol
 
 from app.metrics.muscle_mapping import (
@@ -201,7 +201,7 @@ def detect_prs(
 ) -> list[PersonalRecord]:
     prs: list[PersonalRecord] = []
     ws = working_sets(sets)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     top = top_set_weight(sets)
     if bests.heaviest_weight_kg is None or top > bests.heaviest_weight_kg:
@@ -238,7 +238,7 @@ def detect_session_pr(total_volume_kg: float, bests: SessionBests) -> PersonalRe
             exercise_name="__session__",
             record_type=RecordType.HIGHEST_SESSION_VOLUME,
             value=total_volume_kg,
-            achieved_at=datetime.utcnow(),
+            achieved_at=datetime.now(timezone.utc),
         )
     return None
 

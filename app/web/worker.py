@@ -23,11 +23,18 @@ from app.agents.data_agent import build_endurance_context, build_strength_contex
 from app.agents.endurance_analyst import EnduranceAnalystAgent
 from app.agents.orchestrator import OrchestratorAgent
 from app.agents.strength_analyst import StrengthAnalystAgent
+from app.clients.gemini import GeminiDailyCapExceeded
 from app.charts import cross, endurance as endurance_charts, strength as strength_charts
 from app.memory.session import SessionManager, contains_pronoun, soft_confirmation_prefix
 from app.metrics.muscle_mapping import normalize_exercise_name
-from app.models.agent_io import OrchestratorOutput
+from app.models.agent_io import (
+    ConversationReply,
+    EnduranceAnalysis,
+    OrchestratorOutput,
+    StrengthAnalysis,
+)
 from app.models.enums import FocusType
+from app.models.profile import AthleteProfile
 from app.models.session import EntityRef, FocusRef, Turn
 from app.security.auth import verify_qstash_signature
 from app.storage.db import Database
@@ -124,8 +131,8 @@ def handle_post(
         if kind == "telegram_update":
             try:
                 update = payload.get("update") or {}
-                message = update.get("message") or (update.get("callback_query") or {}).get("message")
-                if message and "chat" in message and "id" in message["chat"]:
+                message = update.get("message") or update.get("edited_message") or (update.get("callback_query") or {}).get("message")
+                if message and isinstance(message.get("chat"), dict) and "id" in message["chat"]:
                     chat_id = message["chat"]["id"]
                     deps.telegram.send_markdown(
                         chat_id,
@@ -183,11 +190,27 @@ def _run_strength_briefing(activity: dict, deps: WorkerDeps) -> None:
     )
     deps.exercise_history.record_strength_session(activity_raw_json=activity, context=context)
 
-    profile = deps.profile_repo.get()
-    analysis = deps.strength_analyst.analyze(
-        context=context, recent_history_json="[]", raw_activity_text=activity.get("description") or "",
-        training_goal=profile.training_goal,
-    )
+    try:
+        profile = deps.profile_repo.get()
+        training_goal = profile.training_goal
+    except Exception as exc:
+        logger.warning("Failed to fetch profile: %s; using default", exc)
+        training_goal = deps.training_goal_default
+
+    try:
+        analysis = deps.strength_analyst.analyze(
+            context=context, recent_history_json="[]", raw_activity_text=activity.get("description") or "",
+            training_goal=training_goal,
+        )
+    except Exception as exc:
+        logger.warning("Strength analyst failed (%s); generating deterministic fallback briefing", exc)
+        analysis = StrengthAnalysis(
+            headline=context.title,
+            what_went_well=[f"Completed {context.working_set_count} working sets with {context.total_volume_kg:.0f}kg total volume."],
+            what_to_improve=[],
+            next_session="Rest or proceed to your next planned session.",
+            watch_out=None,
+        )
 
     chart_bytes = None
     if context.volume_by_muscle_group:
@@ -209,17 +232,34 @@ def _run_endurance_briefing(activity: dict, deps: WorkerDeps) -> None:
         activity["id"], ["time", "heartrate", "distance", "altitude", "velocity_smooth", "cadence", "grade_smooth", "moving"],
     )
     laps = deps.strava.get_activity_laps(activity["id"])
-    profile = deps.profile_repo.get()
+    try:
+        profile = deps.profile_repo.get()
+    except Exception as exc:
+        logger.warning("Failed to fetch profile: %s; using default", exc)
+        profile = AthleteProfile(training_goal=deps.training_goal_default)
 
     context = build_endurance_context(
         activity, streams, laps, profile=profile, median_28d_distance_m=None, acute_7d_load=0, chronic_28d_load=0,
     )
     deps.exercise_history.record_endurance_session(activity_raw_json=activity, context=context)
 
-    analysis = deps.endurance_analyst.analyze(
-        context=context, recent_history_json="[]", raw_activity_text=activity.get("description") or "",
-        training_goal=profile.training_goal,
-    )
+    try:
+        analysis = deps.endurance_analyst.analyze(
+            context=context, recent_history_json="[]", raw_activity_text=activity.get("description") or "",
+            training_goal=profile.training_goal,
+        )
+    except Exception as exc:
+        logger.warning("Endurance analyst failed (%s); generating deterministic fallback briefing", exc)
+        analysis = EnduranceAnalysis(
+            classification=context.classification,
+            classification_confidence=context.classification_confidence,
+            headline=f"{context.sport_type} Session",
+            execution=f"Covered {context.distance_m / 1000:.2f}km in {context.moving_time_s / 60:.0f} min.",
+            what_went_well=[f"Completed {context.distance_m / 1000:.2f}km run."],
+            what_to_improve=[],
+            next_session="Rest or easy recovery run.",
+            load_context="",
+        )
 
     chart_bytes = endurance_charts.e01_hr_zone_distribution(context.zone_distribution) if context.zone_distribution else None
 
@@ -294,11 +334,11 @@ def process_telegram_non_owner(payload: dict, deps: WorkerDeps) -> None:
 
 
 def process_telegram_update(update: dict, deps: WorkerDeps) -> None:
-    message = update.get("message") or (update.get("callback_query") or {}).get("message")
-    if message is None:
+    message = update.get("message") or update.get("edited_message") or (update.get("callback_query") or {}).get("message")
+    if message is None or not isinstance(message.get("chat"), dict) or "id" not in message["chat"]:
         return
     chat_id = message["chat"]["id"]
-    text = (update.get("message", {}) or {}).get("text", "") or ""
+    text = message.get("text", "") or ""
     callback_data = (update.get("callback_query") or {}).get("data")
 
     if text.startswith("/"):
@@ -371,7 +411,7 @@ def _handle_manual_workout_log(text: str, chat_id: int, deps: WorkerDeps) -> boo
 
 def _handle_command(text: str, chat_id: int, deps: WorkerDeps) -> bool:
     parts = text.strip().split(maxsplit=1)
-    command = parts[0].lower()
+    command = parts[0].lower().split("@")[0]
     args = parts[1] if len(parts) > 1 else ""
 
     if command == "/start":
@@ -508,7 +548,13 @@ def _fetch_data_for_turn(route: OrchestratorOutput, deps: WorkerDeps) -> dict:
 
 
 def _handle_conversation_turn(text: str, chat_id: int, deps: WorkerDeps) -> None:
-    profile = deps.profile_repo.get()
+    try:
+        profile = deps.profile_repo.get()
+        training_goal = profile.training_goal
+    except Exception as exc:
+        logger.warning("Could not fetch profile for conversation turn: %s; using default", exc)
+        training_goal = deps.training_goal_default
+
     state, is_new = deps.session_manager.get_or_create(chat_id)
 
     prefix = ""
@@ -523,11 +569,23 @@ def _handle_conversation_turn(text: str, chat_id: int, deps: WorkerDeps) -> None
 
     fetched_data = _fetch_data_for_turn(route, deps)
 
-    reply = deps.conversation.reply(
-        training_goal=profile.training_goal, session_context=session_context,
-        recent_turns="\n".join(f"{t.role}: {t.text}" for t in state.turns[-6:]),
-        fetched_data_json=json.dumps(fetched_data), raw_activity_text="", user_message=text,
-    )
+    try:
+        reply = deps.conversation.reply(
+            training_goal=training_goal, session_context=session_context,
+            recent_turns="\n".join(f"{t.role}: {t.text}" for t in state.turns[-6:]),
+            fetched_data_json=json.dumps(fetched_data), raw_activity_text="", user_message=text,
+        )
+    except GeminiDailyCapExceeded:
+        reply = ConversationReply(
+            reply_markdown="⚠️ I've reached the daily AI conversation cap for today. It resets at midnight UTC! Your workouts and metrics continue to be logged deterministically.",
+            updated_focus=None,
+        )
+    except Exception as exc:
+        logger.warning("Conversation agent failed: %s", exc)
+        reply = ConversationReply(
+            reply_markdown="⚠️ I had trouble generating a response from Gemini right now. Please try asking again in a moment.",
+            updated_focus=None,
+        )
 
     message_text = prefix + reply.reply_markdown if prefix else reply.reply_markdown
     deps.telegram.send_markdown(chat_id, message_text)

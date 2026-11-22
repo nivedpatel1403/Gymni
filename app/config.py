@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     database_url: str
     upstash_redis_rest_url: str
     upstash_redis_rest_token: str
+    qstash_url: str = "https://qstash.upstash.io"
     qstash_token: str
     qstash_current_signing_key: str
     qstash_next_signing_key: str
