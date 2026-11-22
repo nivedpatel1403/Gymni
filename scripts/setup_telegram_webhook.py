@@ -33,7 +33,7 @@ def main() -> None:
         result = client.set_webhook(
             url=f"{settings.app_url}/api/webhook/telegram",
             secret_token=settings.telegram_webhook_secret,
-            allowed_updates=["message", "callback_query"],
+            allowed_updates=["message", "edited_message", "callback_query"],
             drop_pending_updates=True,
         )
         print(result)
