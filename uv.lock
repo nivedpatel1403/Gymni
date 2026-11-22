@@ -530,7 +530,7 @@ wheels = [
 ]
 
 [[package]]
-name = "liftmate"
+name = "gymni"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

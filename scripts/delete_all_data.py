@@ -23,7 +23,7 @@ TABLES = [
 
 def main() -> None:
     settings = get_settings()
-    confirm = input("This permanently deletes ALL LiftMate data (Postgres + session/cache keys). Type DELETE to continue: ")
+    confirm = input("This permanently deletes ALL Gymni data (Postgres + session/cache keys). Type DELETE to continue: ")
     if confirm != "DELETE":
         print("Aborted.")
         raise SystemExit(1)

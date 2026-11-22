@@ -84,6 +84,11 @@ class ExerciseHistoryRepo:
             row = conn.execute("SELECT strava_id FROM activities ORDER BY start_date DESC LIMIT 1").fetchone()
         return row[0] if row else None
 
+    def get_activity_raw_json(self, activity_id: int) -> dict | None:
+        with self._db.connection() as conn:
+            row = conn.execute("SELECT raw_json FROM activities WHERE strava_id = %s", (activity_id,)).fetchone()
+        return row[0] if row else None
+
     def get_session_bests(self) -> SessionBests:
         with self._db.connection() as conn:
             row = conn.execute(

@@ -16,4 +16,5 @@ dist/
 build/
 .vercel/
 .vercel
+.vscode/
 .env*

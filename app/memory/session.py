@@ -3,10 +3,13 @@ explicit focus state so pronoun resolution doesn't depend on the LLM alone.
 """
 from __future__ import annotations
 
+import logging
 import re
 
 from app.models.session import FocusRef, SessionState
 from app.storage.redis import UpstashRedis
+
+logger = logging.getLogger(__name__)
 
 _PRONOUN_RE = re.compile(r"\b(it|that|this|those|them|the last one)\b", re.IGNORECASE)
 
@@ -30,21 +33,35 @@ class SessionManager:
         return f"session:{chat_id}"
 
     def load(self, chat_id: int) -> SessionState | None:
-        raw = self._redis.get(self._key(chat_id))
+        try:
+            raw = self._redis.get(self._key(chat_id))
+        except Exception as exc:
+            logger.warning("Failed to load session for chat_id=%s from Redis: %s", chat_id, exc)
+            return None
         if raw is None:
             return None
-        state = SessionState.model_validate_json(raw)
-        if state.is_expired():
+        try:
+            state = SessionState.model_validate_json(raw)
+            if state.is_expired():
+                return None
+            return state
+        except Exception as exc:
+            logger.warning("Failed to parse session state for chat_id=%s: %s", chat_id, exc)
             return None
-        return state
 
     def save(self, state: SessionState) -> None:
         state.touch(self._ttl)
-        self._redis.set(self._key(state.chat_id), state.model_dump_json(), ex=self._ttl)
+        try:
+            self._redis.set(self._key(state.chat_id), state.model_dump_json(), ex=self._ttl)
+        except Exception as exc:
+            logger.warning("Failed to save session for chat_id=%s to Redis: %s", state.chat_id, exc)
 
     def forget(self, chat_id: int) -> None:
         """The /forget command — deletes immediately, no grace period (PRD §7.2)."""
-        self._redis.delete(self._key(chat_id))
+        try:
+            self._redis.delete(self._key(chat_id))
+        except Exception as exc:
+            logger.warning("Failed to delete session for chat_id=%s from Redis: %s", chat_id, exc)
 
     def get_or_create(self, chat_id: int, fallback_focus: FocusRef | None = None) -> tuple[SessionState, bool]:
         """Returns (state, is_new_session). On a missing/expired session, starts a

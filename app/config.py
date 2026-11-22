@@ -21,10 +21,10 @@ class Settings(BaseSettings):
     telegram_owner_chat_id: int
 
     # ── Strava ────────────────────────────────────────────
-    strava_client_id: str
-    strava_client_secret: str
-    strava_verify_token: str
-    strava_athlete_id: int
+    strava_client_id: str = ""
+    strava_client_secret: str = ""
+    strava_verify_token: str = "a4f08de3008105a76c75fa431c77ccd0"
+    strava_athlete_id: int | None = None
     strava_api_base: str = "https://www.strava.com/api/v3"
     # Set after running scripts/setup_strava_webhook.py — Strava returns this
     # subscription id, which the webhook POST handler validates against
@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     distance_unit: Literal["km", "mi"] = "km"
     training_goal: str = "Hybrid — lifting + running, general fitness"
 
-    @field_validator("strava_subscription_id", "max_hr", "resting_hr", "lthr", "bodyweight_kg", mode="before")
+    @field_validator("strava_subscription_id", "strava_athlete_id", "max_hr", "resting_hr", "lthr", "bodyweight_kg", mode="before")
     @classmethod
     def _blank_string_is_none(cls, v):
         # An unset numeric env var (e.g. STRAVA_SUBSCRIPTION_ID= before the

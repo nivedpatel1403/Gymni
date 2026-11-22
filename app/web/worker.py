@@ -121,6 +121,18 @@ def handle_post(
             logger.warning("Unknown worker payload kind: %s", kind)
     except Exception:
         logger.exception("Worker failed processing kind=%s", kind)
+        if kind == "telegram_update":
+            try:
+                update = payload.get("update") or {}
+                message = update.get("message") or (update.get("callback_query") or {}).get("message")
+                if message and "chat" in message and "id" in message["chat"]:
+                    chat_id = message["chat"]["id"]
+                    deps.telegram.send_markdown(
+                        chat_id,
+                        "⚠️ Sorry, an error occurred while processing your request. Please try again in a moment.",
+                    )
+            except Exception as notify_exc:
+                logger.warning("Failed to notify user of error on Telegram: %s", notify_exc)
         event_hash = payload.get("event_hash")
         if event_hash:
             deps.event_log.mark_failed(event_hash)
@@ -290,56 +302,141 @@ def process_telegram_update(update: dict, deps: WorkerDeps) -> None:
     callback_data = (update.get("callback_query") or {}).get("data")
 
     if text.startswith("/"):
-        _handle_command(text, chat_id, deps)
+        if _handle_command(text, chat_id, deps):
+            return
         return
     if callback_data:
         _handle_callback(callback_data, chat_id, deps)
         return
 
+    # Check if text is a pasted workout (e.g. copied from Hevy or notes)
+    if _handle_manual_workout_log(text, chat_id, deps):
+        return
+
     _handle_conversation_turn(text, chat_id, deps)
 
 
-def _handle_command(text: str, chat_id: int, deps: WorkerDeps) -> None:
+def _handle_manual_workout_log(text: str, chat_id: int, deps: WorkerDeps) -> bool:
+    from app.parsers.hevy_strava_description import parse_hevy_strava_description
+
+    content = text.strip()
+    is_explicit_command = False
+    if content.lower().startswith(("/log", "/workout")):
+        is_explicit_command = True
+        parts = content.split(maxsplit=1)
+        content = parts[1].strip() if len(parts) > 1 else ""
+        if not content:
+            deps.telegram.send_markdown(
+                chat_id,
+                "📋 **How to log a workout**:\n\n"
+                "You can type `/log <workout>` or simply **paste your workout text directly** into the chat!\n\n"
+                "Example format (from Hevy or notes):\n"
+                "```\n"
+                "Bench Press (Barbell)\n"
+                "Set 1: 60 kg x 10\n"
+                "Set 2: 70 kg x 8\n"
+                "Set 3: 80 kg x 6\n\n"
+                "Incline Dumbbell Press\n"
+                "Set 1: 24 kg x 10\n"
+                "Set 2: 28 kg x 8\n"
+                "```",
+            )
+            return True
+
+    parsed = parse_hevy_strava_description(content, "Workout")
+    if not parsed.exercises:
+        if is_explicit_command:
+            deps.telegram.send_markdown(
+                chat_id,
+                "⚠️ Couldn't find any exercises with valid sets in your message.\n\n"
+                "Ensure sets are formatted like `Set 1: 60 kg x 10` or `60kg x 10`.",
+            )
+            return True
+        return False
+
+    now = datetime.now(timezone.utc)
+    activity_id = int(now.timestamp() * 1000)
+    activity = {
+        "id": activity_id,
+        "name": parsed.title or "Strength Workout",
+        "description": content,
+        "start_date": now.isoformat(),
+        "elapsed_time": 3600,
+        "sport_type": "WeightTraining",
+        "type": "WeightTraining",
+    }
+    _run_strength_briefing(activity, deps)
+    return True
+
+
+def _handle_command(text: str, chat_id: int, deps: WorkerDeps) -> bool:
     parts = text.strip().split(maxsplit=1)
     command = parts[0].lower()
     args = parts[1] if len(parts) > 1 else ""
 
     if command == "/start":
-        deps.telegram.send_markdown(chat_id, "👋 I'm LiftMate. I'll message you automatically after a run or lifting session, then you can ask me anything about it for 30 minutes. Try /help for commands.")
+        deps.telegram.send_markdown(chat_id, "👋 I'm Gymni, your personal AI fitness coach. Paste your workout from Hevy or notes directly here (or use /log), and I'll send an instant deep-dive analysis and chart. Try /help for all commands.")
+        return True
+    elif command in ("/log", "/workout"):
+        _handle_manual_workout_log(text, chat_id, deps)
+        return True
     elif command == "/help":
         deps.telegram.send_markdown(chat_id, (
-            "**Commands**\n- /last — resend the most recent briefing\n- /week — weekly summary\n"
+            "**Commands**\n- /log — log a workout (or just paste Hevy/notes text!)\n"
+            "- /last — resend the most recent briefing\n- /week — weekly summary\n"
             "- /pr — recent PRs\n- /chart — a chart for the current focus\n- /profile — view/set goal, HR, bodyweight, units\n"
             "- /forget — clear the current conversation\n- /debug — recent event log + rate-limit usage"
         ))
+        return True
     elif command == "/last":
         _handle_last_command(chat_id, deps)
+        return True
     elif command == "/forget":
         deps.session_manager.forget(chat_id)
         deps.telegram.send_markdown(chat_id, "Cleared. Fresh start.")
+        return True
     elif command == "/profile":
         _handle_profile_command(args, chat_id, deps)
+        return True
     elif command == "/pr":
         deps.telegram.send_markdown(chat_id, "Recent PRs are tracked per exercise — ask me e.g. \"what's my bench PR?\" and I'll pull it from your history.")
+        return True
     elif command == "/week":
         deps.telegram.send_markdown(chat_id, "Weekly summary is still basic in v1 — ask me \"how's this week looked?\" and I'll answer from what's logged so far.")
+        return True
     elif command == "/chart":
         deps.telegram.send_markdown(chat_id, "Tell me what to chart (e.g. \"chart my bench progress\") and I'll pick the right one.")
+        return True
     elif command == "/compare":
         deps.telegram.send_markdown(chat_id, "Ask me directly, e.g. \"compare this to last time\" or \"compare it to Tuesday's run\".")
+        return True
     elif command == "/debug":
         deps.telegram.send_markdown(chat_id, "Debug info: check the Vercel function logs and the QStash console for queue depth — a dedicated /debug data pull is a v1.1 candidate.")
+        return True
     else:
         deps.telegram.send_markdown(chat_id, "Unknown command. Try /help.")
+        return True
 
 
 def _handle_last_command(chat_id: int, deps: WorkerDeps) -> None:
     activity_id = deps.exercise_history.get_most_recent_activity_id()
     if activity_id is None:
-        deps.telegram.send_markdown(chat_id, "Nothing logged yet — once a run or lifting session syncs from Strava, /last will resend its briefing.")
+        deps.telegram.send_markdown(chat_id, "Nothing logged yet — paste a workout or log one with /log first.")
         return
 
-    activity = deps.strava.get_activity(activity_id)
+    activity = None
+    if hasattr(deps.exercise_history, "get_activity_raw_json"):
+        activity = deps.exercise_history.get_activity_raw_json(activity_id)
+    if activity is None and getattr(deps, "strava", None) is not None:
+        try:
+            activity = deps.strava.get_activity(activity_id)
+        except Exception:
+            pass
+
+    if activity is None:
+        deps.telegram.send_markdown(chat_id, "Could not retrieve the last activity.")
+        return
+
     sport_type = activity.get("sport_type") or activity.get("type")
     if sport_type == "WeightTraining":
         _run_strength_briefing(activity, deps)
@@ -432,10 +529,14 @@ def _handle_conversation_turn(text: str, chat_id: int, deps: WorkerDeps) -> None
         fetched_data_json=json.dumps(fetched_data), raw_activity_text="", user_message=text,
     )
 
+    message_text = prefix + reply.reply_markdown if prefix else reply.reply_markdown
+    deps.telegram.send_markdown(chat_id, message_text)
+
     state.push_turn(Turn(role="user", text=text, ts=datetime.now(timezone.utc).timestamp(), intent=route.intent))
     state.push_turn(Turn(role="assistant", text=reply.reply_markdown, ts=datetime.now(timezone.utc).timestamp()))
     if reply.updated_focus and reply.updated_focus.type in {t.value for t in FocusType}:
         state.set_focus(FocusRef(type=FocusType(reply.updated_focus.type), ref=reply.updated_focus.ref, label=reply.updated_focus.ref, set_at=datetime.now(timezone.utc).timestamp(), set_by="user_mention"))
-    deps.session_manager.save(state)
-
-    deps.telegram.send_markdown(chat_id, prefix + reply.reply_markdown if prefix else reply.reply_markdown)
+    try:
+        deps.session_manager.save(state)
+    except Exception as exc:
+        logger.warning("Failed to save session for chat_id=%s: %s", chat_id, exc)

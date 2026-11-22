@@ -116,8 +116,8 @@ class MuscleMapResolver:
             result = self._gemini.generate_structured(
                 model=self._model, prompt=prompt, response_schema=ExerciseMuscleClassification
             )
-        except (GeminiStructuredOutputError, GeminiDailyCapExceeded):
-            logger.warning("Muscle classification unavailable for %r.", display_name)
+        except Exception as exc:
+            logger.warning("Muscle classification unavailable for %r: %s", display_name, exc)
             return None
 
         if result.confidence < MIN_CONFIDENCE:

@@ -6,9 +6,12 @@ general-purpose distributed lock.
 """
 from __future__ import annotations
 
+import logging
 import time
 
 from app.storage.redis import UpstashRedis
+
+logger = logging.getLogger(__name__)
 
 
 class RedisLock:
@@ -21,10 +24,17 @@ class RedisLock:
 
     def __enter__(self) -> "RedisLock":
         for _ in range(self._max_attempts):
-            if self._redis.set_nx(self._key, "1", self._ttl):
+            try:
+                if self._redis.set_nx(self._key, "1", self._ttl):
+                    return self
+            except Exception as exc:
+                logger.warning("RedisLock acquire failed on Redis error for key=%s: %s; proceeding without lock", self._key, exc)
                 return self
             time.sleep(self._retry_delay_s)
         return self  # proceed rather than deadlock — worst case is one redundant token refresh
 
     def __exit__(self, *exc_info) -> None:
-        self._redis.delete(self._key)
+        try:
+            self._redis.delete(self._key)
+        except Exception as exc:
+            logger.warning("RedisLock release failed on Redis error for key=%s: %s", self._key, exc)

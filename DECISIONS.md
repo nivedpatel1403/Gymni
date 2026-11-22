@@ -83,7 +83,7 @@ With real credentials in `.env`, the following were actually exercised against t
 - **Postgres (Supabase)**: `migrations/001_init.sql` applied successfully; all 8 tables confirmed present; `ProfileRepo` read/write confirmed, seeded with the real physiology numbers above.
 - **Redis (Upstash)**: SET/GET/DEL round-trip confirmed.
 - **Gemini**: both configured models confirmed live, per above.
-- **Telegram**: bot token confirmed valid via `getMe` (read-only — confirmed identity as `@LiftMateBot` without sending any message).
+- **Telegram**: bot token confirmed valid via `getMe` (read-only — confirmed identity as the legacy account `@LiftMateBot` (historical username; project now named Gymni) without sending any message).
 - **All six `api/*.py` entrypoints** import cleanly with real settings, confirming the full dependency-injection chain (`app/platform/bootstrap.py`) wires together without error. (Note: these six files were later consolidated into a single `api/index.py` — see the correction entry below — but the dependency-wiring verification still applies.)
 
 **Not yet tested live** (each needs a step only the developer can do, or a deployed URL that doesn't exist yet):

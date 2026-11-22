@@ -1,10 +1,10 @@
-# PRD — LiftMate: Multi-Agent Fitness Coach Bot (Strava + Hevy → Telegram)
+# PRD — Gymni: Multi-Agent Fitness Coach Bot (Strava + Hevy → Telegram)
 
 **Version:** 1.0
 **Date:** 26 July 2026
 **Owner:** (you)
 **Audience:** Claude Code (implementation agent)
-**Bot:** [@LiftMateBot](https://t.me/LiftMateBot)
+**Legacy bot account:** [@LiftMateBot](https://t.me/LiftMateBot) (historical username; project branding is Gymni)
 
 ---
 
@@ -786,7 +786,7 @@ Activity titles, descriptions, and workout notes are free text. Even self-author
 ## 9. Repository layout
 
 ```
-liftmate/
+gymni/
 ├── api/                              # Vercel serverless entrypoints
 │   ├── webhook/strava.py
 │   ├── webhook/telegram.py

@@ -171,12 +171,29 @@
       "shoulders"
     ]
   },
+  "dumbbell_bench_press": {
+    "primary": [
+      "chest"
+    ],
+    "secondary": [
+      "shoulders",
+      "triceps"
+    ]
+  },
   "dumbbell_row": {
     "primary": [
       "back"
     ],
     "secondary": [
       "biceps"
+    ]
+  },
+  "dumbbell_shoulder_press": {
+    "primary": [
+      "shoulders"
+    ],
+    "secondary": [
+      "triceps"
     ]
   },
   "face_pull": {
@@ -305,6 +322,15 @@
     ],
     "secondary": [
       "shoulders"
+    ]
+  },
+  "incline_dumbbell_press": {
+    "primary": [
+      "chest"
+    ],
+    "secondary": [
+      "shoulders",
+      "triceps"
     ]
   },
   "lat_pulldown": {

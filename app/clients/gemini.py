@@ -10,12 +10,15 @@ the env var, nothing in code.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Protocol, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
 from app.storage.redis import UpstashRedis
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -43,9 +46,13 @@ class DailyCallCounter:
 
     def check_and_increment(self) -> int:
         key = f"gemini:calls:{datetime.now(timezone.utc):%Y-%m-%d}"
-        count = self._redis.incr(key)
-        if count == 1:
-            self._redis.expire(key, _seconds_until_midnight_utc())
+        try:
+            count = self._redis.incr(key)
+            if count == 1:
+                self._redis.expire(key, _seconds_until_midnight_utc())
+        except Exception as exc:
+            logger.warning("Redis daily call counter failed: %s; failing open", exc)
+            return 0
         if count > self._cap:
             raise GeminiDailyCapExceeded(f"Daily Gemini call cap ({self._cap}) exceeded — deterministic metrics only until UTC midnight.")
         return count
@@ -66,7 +73,12 @@ class GeminiClient:
     def generate_structured(self, *, model: str, prompt: str, response_schema: type[T], max_retries: int = 1) -> T:
         last_error: Exception | None = None
         for attempt in range(max_retries + 1):
-            self._call_counter.check_and_increment()
+            try:
+                self._call_counter.check_and_increment()
+            except GeminiDailyCapExceeded:
+                raise
+            except Exception as exc:
+                logger.warning("Call counter check failed: %s; proceeding with Gemini call", exc)
             response = self._invoke(model, prompt, response_schema)
             try:
                 return self._parse(response, response_schema)

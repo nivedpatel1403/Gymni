@@ -78,12 +78,12 @@ def test_send_photo_sends_multipart_with_caption():
 
 def test_get_me_returns_bot_identity():
     def handler(request):
-        return httpx.Response(200, json={"ok": True, "result": {"id": 1, "username": "LiftMateBot"}})
+        return httpx.Response(200, json={"ok": True, "result": {"id": 1, "username": "GymniBot"}})
 
     client, log = _client(handler)
     info = client.get_me()
 
-    assert info["result"]["username"] == "LiftMateBot"
+    assert info["result"]["username"] == "GymniBot"
     assert log[0].url.path.endswith("/getMe")
 
 

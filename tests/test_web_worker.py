@@ -280,7 +280,7 @@ def test_command_start():
     telegram = FakeTelegram()
     deps = _make_deps(FakeStrava({}), telegram)
     _post({"kind": "telegram_update", "update": {"message": {"chat": {"id": 111}, "text": "/start"}}}, deps)
-    assert "LiftMate" in telegram.sent_markdown[0][1]
+    assert "Gymni" in telegram.sent_markdown[0][1]
 
 
 def test_command_profile_goal_update():
@@ -466,3 +466,55 @@ def test_conversation_turn_actually_sends_fetched_data_to_the_llm():
     conversation_prompt = next(text for schema, text in deps._gemini_calls if schema is ConversationReply)
     assert "100.0" in conversation_prompt or "100" in conversation_prompt
     assert conversation_prompt.count('"{}"') == 0  # the old bug: fetched_data_json hardcoded to an empty object
+
+
+def test_manual_workout_log_via_command():
+    telegram = FakeTelegram()
+    deps = _make_deps(FakeStrava({}), telegram, gemini_responses={
+        StrengthAnalysis: StrengthAnalysis(
+            headline="Great Chest Day", what_went_well=["Hit 80kg bench"],
+            what_to_improve=["Rest more"], next_session="Incline press", watch_out=None,
+        ),
+    })
+
+    workout_text = "/log Bench Press (Barbell)\nSet 1: 80 kg x 8\nSet 2: 85 kg x 6"
+    _post({"kind": "telegram_update", "update": {"message": {"chat": {"id": 111}, "text": workout_text}}}, deps)
+
+    assert len(deps.exercise_history.recorded) == 1
+    assert any("⚡ Great Chest Day" in text for _, text, _ in telegram.sent_markdown)
+    assert len(telegram.sent_photos) == 1
+    assert telegram.sent_photos[0][1] == "Volume by muscle group"
+
+
+def test_manual_workout_log_direct_paste():
+    telegram = FakeTelegram()
+    deps = _make_deps(FakeStrava({}), telegram, gemini_responses={
+        StrengthAnalysis: StrengthAnalysis(
+            headline="Direct Paste Logged", what_went_well=["Good volume"],
+            what_to_improve=["Keep tempo"], next_session="Rest", watch_out=None,
+        ),
+    })
+
+    workout_text = "Shoulder Press (Dumbbell)\nSet 1: 40 kg x 8\nSet 2: 45 kg x 6"
+    _post({"kind": "telegram_update", "update": {"message": {"chat": {"id": 111}, "text": workout_text}}}, deps)
+
+    assert len(deps.exercise_history.recorded) == 1
+    assert any("⚡ Direct Paste Logged" in text for _, text, _ in telegram.sent_markdown)
+    assert len(telegram.sent_photos) == 1
+
+
+def test_manual_workout_log_empty_command_shows_usage():
+    telegram = FakeTelegram()
+    deps = _make_deps(FakeStrava({}), telegram)
+
+    _post({"kind": "telegram_update", "update": {"message": {"chat": {"id": 111}, "text": "/log"}}}, deps)
+    assert "How to log a workout" in telegram.sent_markdown[0][1]
+
+
+def test_manual_workout_log_invalid_command_shows_warning():
+    telegram = FakeTelegram()
+    deps = _make_deps(FakeStrava({}), telegram)
+
+    _post({"kind": "telegram_update", "update": {"message": {"chat": {"id": 111}, "text": "/log no sets or weights here"}}}, deps)
+    assert "Couldn't find any exercises" in telegram.sent_markdown[0][1]
+

@@ -1,8 +1,8 @@
-# LiftMate
+# Gymni
 
 A personal Telegram bot that reacts to your completed workouts within a minute, sends an unprompted deep-dive analysis, then holds a 30-minute conversation about it. Weight training is parsed from the Strava activity description Hevy writes when it syncs; runs use Strava's streams/laps directly. All arithmetic (volume, e1RM, PRs, HR zones, decoupling, ACWR, ...) is computed in plain Python — the LLM (Gemini) only interprets already-computed numbers, never calculates them.
 
-See [`LiftMate_PRD.md`](./LiftMate_PRD.md) for the full spec this was built against, and [`DECISIONS.md`](./DECISIONS.md) for every judgement call and live-docs finding made along the way — read that before assuming anything below is exactly what the PRD originally asked for. The single biggest deviation: **lifting data comes from Strava's activity description, not the Hevy API** (no Hevy Pro needed, but the parser is provisional — see DECISIONS.md).
+See [`Gymni_PRD.md`](./Gymni_PRD.md) for the full spec this was built against, and [`DECISIONS.md`](./DECISIONS.md) for every judgement call and live-docs finding made along the way — read that before assuming anything below is exactly what the PRD originally asked for. The single biggest deviation: **lifting data comes from Strava's activity description, not the Hevy API** (no Hevy Pro needed, but the parser is provisional — see DECISIONS.md).
 
 ## Architecture
 

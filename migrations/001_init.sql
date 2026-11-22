@@ -1,4 +1,4 @@
--- LiftMate schema. Single-tenant (PRD §1.2) but every table is still keyed
+-- Gymni schema. Single-tenant (PRD §1.2) but every table is still keyed
 -- properly rather than assuming "row 0" magic, so this doesn't have to be
 -- rewritten if that assumption ever changes.
 --
